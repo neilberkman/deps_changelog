@@ -297,6 +297,7 @@ defmodule Mix.Tasks.Deps.Changelog do
     def parse!(version_string, source \\ nil)
     def parse!(version_string, source) when is_binary(version_string) do
       cond do
+        # Check if it's a 40-character git hash
         git_hash?(version_string) ->
           %__MODULE__{
             type: :git_hash,
@@ -305,18 +306,21 @@ defmodule Mix.Tasks.Deps.Changelog do
             source: source
           }
 
+        # Check if it looks like a semantic version or tag
         semantic_version?(version_string) ->
-          case Version.parse(version_string) do
+          # Remove 'v' prefix if present for parsing
+          cleaned = String.replace_prefix(version_string, "v", "")
+          case Version.parse(cleaned) do
             {:ok, version} ->
               %__MODULE__{
                 type: :semantic,
                 value: version,
-                display: version_string,
+                display: version_string,  # Keep original format with 'v' if present
                 source: source
               }
 
             :error ->
-              # Treat as git reference if not a valid semantic version
+              # Not a valid semantic version, treat as tag/ref
               %__MODULE__{
                 type: :git_hash,
                 value: version_string,
@@ -326,7 +330,7 @@ defmodule Mix.Tasks.Deps.Changelog do
           end
 
         true ->
-          # Default to treating as git reference
+          # Default to treating as git reference/tag
           %__MODULE__{
             type: :git_hash,
             value: version_string,
@@ -380,13 +384,38 @@ defmodule Mix.Tasks.Deps.Changelog do
     end
   end
 
+  # Get original dependency specifications from mix.exs
+  defp get_original_dep_specs do
+    Mix.Project.config()[:deps] || []
+  end
+
   # Helper function to extract version and source from dependency
   defp get_dep_version_and_source(dep) do
     # Check lock first to properly handle Git dependencies
     case Keyword.get(dep.opts, :lock) do
-      # Git dependency - ALWAYS use commit hash, not semantic version
+      # Git dependency - check if it was originally specified with a tag
       {:git, url, commit, _opts} when is_binary(commit) ->
-        {commit, url}
+        # Look up the original specification to see if it used a tag
+        original_spec = get_original_dep_specs()
+        |> Enum.find(fn 
+          {name, _} -> name == dep.app
+          {name, _, _} -> name == dep.app
+          _ -> false
+        end)
+        
+        case original_spec do
+          {_, _, opts} when is_list(opts) ->
+            case Keyword.get(opts, :tag) do
+              nil -> 
+                # No tag, use commit and URL
+                {commit, url}
+              tag ->
+                # Was specified with a tag, use that as the version
+                {tag, url}
+            end
+          _ ->
+            {commit, url}
+        end
 
       # Hex dependency with longer lock format
       {_scm, _name, version, _hash, _build_tools, _deps, _repo, _checksum}
