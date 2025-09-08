@@ -52,9 +52,9 @@ defmodule GitDependencyTest do
       assert length(changes) == 1
       {app, old_v, new_v} = hd(changes)
       assert app == :my_git_dep
-      # 40-char Git hashes are shortened to 8 chars for display
-      assert old_v.display == "abc123de"
-      assert new_v.display == "def45678"
+      # Git hashes now include repo info
+      assert old_v.display == "example/repo@abc123de"
+      assert new_v.display == "example/repo@def45678"
     end
     
     test "handles transition from Git to hex dependency" do
@@ -82,7 +82,7 @@ defmodule GitDependencyTest do
       assert length(changes) == 1
       {app, old_v, new_v} = hd(changes)
       assert app == :transitioning_dep
-      assert old_v.display == "abc123de"
+      assert old_v.display == "example/repo@abc123de"
       assert new_v.display == "1.2.0"
     end
     
@@ -112,7 +112,40 @@ defmodule GitDependencyTest do
       {app, old_v, new_v} = hd(changes)
       assert app == :transitioning_dep
       assert old_v.display == "1.2.0"
-      assert new_v.display == "abc123de"
+      assert new_v.display == "example/repo@abc123de"
+    end
+    
+    test "detects repository changes (fork switching)" do
+      official_dep = %Mix.Dep{
+        app: :forked_dep,
+        top_level: true,
+        status: {:ok, "1.0.0"},
+        opts: [
+          lock: {:git, "https://github.com/official/library.git",
+                 "1234567890123456789012345678901234567890", []}
+        ],
+        deps: []
+      }
+      
+      forked_dep = %Mix.Dep{
+        app: :forked_dep,
+        top_level: true,
+        status: {:ok, "1.0.0"},
+        opts: [
+          lock: {:git, "https://github.com/myuser/library.git",
+                 "1234567890123456789012345678901234567890", []}  # Same commit, different repo
+        ],
+        deps: []
+      }
+      
+      changes = Changelog.dep_changes_in_order([official_dep], [forked_dep])
+      
+      assert length(changes) == 1
+      {app, old_v, new_v} = hd(changes)
+      assert app == :forked_dep
+      # Should show repository change even with same commit
+      assert old_v.display == "official/library@12345678"
+      assert new_v.display == "myuser/library@12345678"
     end
     
     test "multiple unchanged Git dependencies don't show spurious changes" do
